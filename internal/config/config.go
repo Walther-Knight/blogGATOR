@@ -26,9 +26,9 @@ func Read() (Config, error) {
 	return data, nil
 }
 
-func (c *Config) SetUser(name string) {
+func (c *Config) SetUser(name string) error {
 	c.CurrentUserName = name
-	write(*c)
+	return write(*c)
 }
 
 func getConfigPath() (string, error) {
