@@ -1,13 +1,21 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Walther-Knight/blogGATOR/internal/config"
+	"github.com/Walther-Knight/blogGATOR/internal/database"
+	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 )
 
 type state struct {
+	db *database.Queries
 	*config.Config
 }
 
@@ -24,11 +32,48 @@ func handlerLogin(s *state, cmd command) error {
 	if len(cmd.args) == 0 {
 		return fmt.Errorf("invalid command: username required")
 	}
-	err := s.SetUser(cmd.args[0])
+
+	userName := cmd.args[0]
+
+	_, err := s.db.GetUser(context.Background(), userName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("user %s does not exist", userName)
+		}
+		return fmt.Errorf("login failed: %w", err)
+	}
+
+	err = s.SetUser(userName)
 	if err != nil {
 		return fmt.Errorf("set user failed: %w", err)
 	}
 	fmt.Println("User value set in config")
+	return nil
+}
+
+func handlerRegister(s *state, cmd command) error {
+	if len(cmd.args) == 0 {
+		return fmt.Errorf(("invalid command: name required"))
+	}
+
+	userName := cmd.args[0]
+
+	user, err := s.db.CreateUser(context.Background(), database.CreateUserParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Name:      userName,
+	})
+	if err != nil {
+		return fmt.Errorf("create user failed: %w", err)
+	}
+
+	err = s.SetUser(cmd.args[0])
+	if err != nil {
+		return fmt.Errorf("failed to save user to config: %w", err)
+	}
+	fmt.Printf("User %s created successfully\n", userName)
+	fmt.Printf("User data: %+v\n", user)
 	return nil
 }
 
@@ -54,7 +99,16 @@ func main() {
 	cmds := commands{
 		make(map[string]func(*state, command) error),
 	}
+
+	db, err := sql.Open("postgres", cfg.DbURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+	}
+	dbQueries := database.New(db)
+	appState.db = dbQueries
+
 	cmds.register("login", handlerLogin)
+	cmds.register("register", handlerRegister)
 
 	args := os.Args
 	if len(args) < 2 {
