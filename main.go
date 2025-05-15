@@ -10,6 +10,7 @@ import (
 
 	"github.com/Walther-Knight/blogGATOR/internal/config"
 	"github.com/Walther-Knight/blogGATOR/internal/database"
+	"github.com/Walther-Knight/blogGATOR/internal/rss"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
@@ -110,6 +111,22 @@ func handlerGetAllUsers(s *state, cmd command) error {
 	}
 	return nil
 }
+
+func handlerAgg(s *state, cmd command) error {
+	if len(cmd.args) != 0 {
+		return fmt.Errorf(("invalid command: no argument required"))
+	}
+
+	urlDefault := "https://www.wagslane.dev/index.xml"
+	testFeed, err := rss.FetchFeed(context.Background(), urlDefault)
+	if err != nil {
+		return fmt.Errorf("error fetching feed: %w", err)
+	}
+	fmt.Println(testFeed)
+
+	return nil
+}
+
 func (c *commands) run(s *state, cmd command) error {
 	handler, exists := c.cmds[cmd.name]
 	if !exists {
@@ -144,6 +161,7 @@ func main() {
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", handlerResetUsers)
 	cmds.register("users", handlerGetAllUsers)
+	cmds.register("agg", handlerAgg)
 
 	args := os.Args
 	if len(args) < 2 {
