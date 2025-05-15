@@ -151,9 +151,25 @@ func handlerAddFeed(s *state, cmd command) error {
 		UserID:    currentUser.ID,
 	})
 	if err2 != nil {
-		return fmt.Errorf("errpr creating feed in database: %w", err2)
+		return fmt.Errorf("error creating feed in database: %w", err2)
 	}
 	fmt.Println(feed)
+	return nil
+}
+
+func handlerListFeeds(s *state, cmd command) error {
+	if len(cmd.args) != 0 {
+		return fmt.Errorf(("invalid command: no argument required"))
+	}
+
+	feeds, err := s.db.GetAllFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("error retrieving feeds from database: %w", err)
+	}
+	for _, feed := range feeds {
+		fmt.Printf("Feed Name: %s\n Feed URL: %s\n Username: %s\n", feed.Name, feed.Url, feed.Username.String)
+	}
+
 	return nil
 }
 
@@ -193,6 +209,7 @@ func main() {
 	cmds.register("users", handlerGetAllUsers)
 	cmds.register("agg", handlerAgg)
 	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerListFeeds)
 
 	args := os.Args
 	if len(args) < 2 {
