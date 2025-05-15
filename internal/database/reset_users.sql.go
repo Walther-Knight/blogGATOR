@@ -10,7 +10,7 @@ import (
 )
 
 const resetUsers = `-- name: ResetUsers :exec
-DELETE FROM users
+DELETE FROM feed_follows
 `
 
 func (q *Queries) ResetUsers(ctx context.Context) error {
