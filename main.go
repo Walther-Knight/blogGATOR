@@ -29,6 +29,23 @@ type commands struct {
 	cmds map[string]func(*state, command) error
 }
 
+func middlewareLoggedIn(handler func(s *state, cmd command, user database.User) error) func(*state, command) error {
+	// Get a pointer string we can use for identification
+	//handlerPtr := fmt.Sprintf("%p", handler)
+
+	//fmt.Printf("Creating middleware for handler %s\n", handlerPtr)
+
+	return func(s *state, cmd command) error {
+		//fmt.Printf("Executing middleware for command '%s' with original handler %s\n",
+		//	cmd.name, handlerPtr)
+		user, err := s.db.GetUser(context.Background(), s.Config.CurrentUserName)
+		if err != nil {
+			return err
+		}
+		return handler(s, cmd, user)
+	}
+}
+
 func handlerLogin(s *state, cmd command) error {
 	if len(cmd.args) == 0 {
 		return fmt.Errorf("invalid command: username required")
@@ -78,15 +95,26 @@ func handlerRegister(s *state, cmd command) error {
 	return nil
 }
 
-func handlerResetUsers(s *state, cmd command) error {
+func handlerReset(s *state, cmd command) error {
 	if len(cmd.args) != 0 {
 		return fmt.Errorf(("invalid command: no argument required"))
 	}
 
-	err := s.db.ResetUsers(context.Background())
+	err := s.db.ResetFeedFollows(context.Background())
 	if err != nil {
 		return fmt.Errorf("error resetting user table: %w", err)
 	}
+
+	err2 := s.db.ResetUsers(context.Background())
+	if err2 != nil {
+		return fmt.Errorf("error resetting user table: %w", err2)
+	}
+
+	err3 := s.db.ResetFeeds(context.Background())
+	if err3 != nil {
+		return fmt.Errorf("error resetting user table: %w", err3)
+	}
+
 	return nil
 }
 
@@ -127,7 +155,7 @@ func handlerAgg(s *state, cmd command) error {
 	return nil
 }
 
-func handlerAddFeed(s *state, cmd command) error {
+func handlerAddFeed(s *state, cmd command, user database.User) error {
 	if len(cmd.args) > 2 {
 		return fmt.Errorf(("invalid command: too many arguments usage 'addfeed <name> <url>'"))
 	}
@@ -138,17 +166,13 @@ func handlerAddFeed(s *state, cmd command) error {
 
 	name := cmd.args[0]
 	url := cmd.args[1]
-	currentUser, err := s.db.GetUser(context.Background(), s.Config.CurrentUserName)
-	if err != nil {
-		return fmt.Errorf("error retrieving user: %w", err)
-	}
 
 	feed, err2 := s.db.CreateFeed(context.Background(), database.CreateFeedParams{
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Name:      name,
 		Url:       url,
-		UserID:    currentUser.ID,
+		UserID:    user.ID,
 	})
 	if err2 != nil {
 		return fmt.Errorf("error creating feed in database: %w", err2)
@@ -157,7 +181,7 @@ func handlerAddFeed(s *state, cmd command) error {
 	_, err3 := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		UserID:    currentUser.ID,
+		UserID:    user.ID,
 		FeedID:    feed.ID,
 	})
 	if err3 != nil {
@@ -184,16 +208,12 @@ func handlerListFeeds(s *state, cmd command) error {
 	return nil
 }
 
-func handlerFollow(s *state, cmd command) error {
+func handlerFollow(s *state, cmd command, user database.User) error {
 	if len(cmd.args) == 0 {
 		return fmt.Errorf(("invalid command: url required"))
 	}
 
 	url := cmd.args[0]
-	currentUser, err := s.db.GetUser(context.Background(), s.Config.CurrentUserName)
-	if err != nil {
-		return fmt.Errorf("error retrieving user: %w", err)
-	}
 
 	currentFeed, err2 := s.db.GetFeed(context.Background(), url)
 	if err2 != nil {
@@ -203,7 +223,7 @@ func handlerFollow(s *state, cmd command) error {
 	followRes, err3 := s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		UserID:    currentUser.ID,
+		UserID:    user.ID,
 		FeedID:    currentFeed.ID,
 	})
 	if err3 != nil {
@@ -217,17 +237,12 @@ func handlerFollow(s *state, cmd command) error {
 	return nil
 }
 
-func handlerFollowing(s *state, cmd command) error {
+func handlerFollowing(s *state, cmd command, user database.User) error {
 	if len(cmd.args) != 0 {
 		return fmt.Errorf(("invalid command: no arguments required"))
 	}
 
-	currentUser, err := s.db.GetUser(context.Background(), s.Config.CurrentUserName)
-	if err != nil {
-		return fmt.Errorf("error retrieving user: %w", err)
-	}
-
-	followingRes, err2 := s.db.GetFeedFollowsForUser(context.Background(), currentUser.ID)
+	followingRes, err2 := s.db.GetFeedFollowsForUser(context.Background(), user.ID)
 	if err2 != nil {
 		return fmt.Errorf("error getting feed follows for user: %w", err2)
 	}
@@ -244,11 +259,13 @@ func (c *commands) run(s *state, cmd command) error {
 	if !exists {
 		return fmt.Errorf("unknown command: %s", cmd.name)
 	}
+	//fmt.Printf("Executing command '%s' with handler %p\n", cmd.name, handler)
 	return handler(s, cmd)
 }
 
-func (c *commands) register(name string, f func(*state, command) error) {
-	c.cmds[name] = f
+func (c *commands) register(name string, handler func(*state, command) error) {
+	//fmt.Printf("register(): Registering command '%s' with handler %p\n", name, handler)
+	c.cmds[name] = handler
 }
 
 func main() {
@@ -269,15 +286,24 @@ func main() {
 	dbQueries := database.New(db)
 	appState.db = dbQueries
 
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "login", handlerLogin)
 	cmds.register("login", handlerLogin)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "register", handlerRegister)
 	cmds.register("register", handlerRegister)
-	cmds.register("reset", handlerResetUsers)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "reset", handlerReset)
+	cmds.register("reset", handlerReset)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "users", handlerGetAllUsers)
 	cmds.register("users", handlerGetAllUsers)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "agg", handlerAgg)
 	cmds.register("agg", handlerAgg)
-	cmds.register("addfeed", handlerAddFeed)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "addfeed", handlerAddFeed)
+	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "feeds", handlerListFeeds)
 	cmds.register("feeds", handlerListFeeds)
-	cmds.register("follow", handlerFollow)
-	cmds.register("following", handlerFollowing)
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "follow", handlerFollow)
+	cmds.register("follow", middlewareLoggedIn(handlerFollow))
+	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "following", handlerFollowing)
+	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 
 	args := os.Args
 	if len(args) < 2 {
