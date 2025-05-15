@@ -77,6 +77,39 @@ func handlerRegister(s *state, cmd command) error {
 	return nil
 }
 
+func handlerResetUsers(s *state, cmd command) error {
+	if len(cmd.args) != 0 {
+		return fmt.Errorf(("invalid command: no argument required"))
+	}
+
+	err := s.db.ResetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("error resetting user table: %w", err)
+	}
+	return nil
+}
+
+func handlerGetAllUsers(s *state, cmd command) error {
+	if len(cmd.args) != 0 {
+		return fmt.Errorf(("invalid command: no argument required"))
+	}
+
+	userList, err := s.db.GetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("error getting users: %w", err)
+	}
+
+	loggedUser := s.Config.CurrentUserName
+
+	for _, user := range userList {
+		if user.Name == loggedUser {
+			fmt.Printf("* %s (current)\n", user.Name)
+		} else {
+			fmt.Printf("* %s\n", user.Name)
+		}
+	}
+	return nil
+}
 func (c *commands) run(s *state, cmd command) error {
 	handler, exists := c.cmds[cmd.name]
 	if !exists {
@@ -109,6 +142,8 @@ func main() {
 
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
+	cmds.register("reset", handlerResetUsers)
+	cmds.register("users", handlerGetAllUsers)
 
 	args := os.Args
 	if len(args) < 2 {
