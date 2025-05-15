@@ -128,11 +128,11 @@ func handlerAgg(s *state, cmd command) error {
 }
 
 func handlerAddFeed(s *state, cmd command) error {
-	if len(cmd.args) != 0 {
-		return fmt.Errorf(("invalid command: no argument required"))
+	if len(cmd.args) > 2 {
+		return fmt.Errorf(("invalid command: too many arguments usage 'addfeed <name> <url>'"))
 	}
 
-	if len(cmd.args) != 2 {
+	if len(cmd.args) < 2 {
 		return fmt.Errorf("invalid command: usage 'addfeed <name> <url>'")
 	}
 
@@ -144,14 +144,16 @@ func handlerAddFeed(s *state, cmd command) error {
 	}
 
 	feed, err2 := s.db.CreateFeed(context.Background(), database.CreateFeedParams{
-		ID:        id.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Name:      name,
 		Url:       url,
-		UserID:    currentUser,
+		UserID:    currentUser.ID,
 	})
-
+	if err2 != nil {
+		return fmt.Errorf("errpr creating feed in database: %w", err2)
+	}
+	fmt.Println(feed)
 	return nil
 }
 
