@@ -141,18 +141,21 @@ func handlerGetAllUsers(s *state, cmd command) error {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	if len(cmd.args) != 0 {
-		return fmt.Errorf(("invalid command: no argument required"))
+	if len(cmd.args) == 0 {
+		return fmt.Errorf(("invalid command: syntax agg <timeBetweenReqs>"))
 	}
 
-	urlDefault := "https://www.wagslane.dev/index.xml"
-	testFeed, err := rss.FetchFeed(context.Background(), urlDefault)
+	timeBetweenReqs, err := time.ParseDuration(cmd.args[0])
 	if err != nil {
-		return fmt.Errorf("error fetching feed: %w", err)
+		return fmt.Errorf("invalid command: duration should be valid: %w", err)
 	}
-	fmt.Println(testFeed)
 
-	return nil
+	fmt.Printf("Collecting feeds every %v", timeBetweenReqs)
+	ticker := time.NewTicker(timeBetweenReqs)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s)
+	}
+
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
@@ -237,6 +240,29 @@ func handlerFollow(s *state, cmd command, user database.User) error {
 	return nil
 }
 
+func handlerUnFollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) == 0 {
+		return fmt.Errorf(("invalid command: url required"))
+	}
+
+	url := cmd.args[0]
+
+	currentFeed, err := s.db.GetFeed(context.Background(), url)
+	if err != nil {
+		return fmt.Errorf("error retrieving feed: %w", err)
+	}
+
+	err2 := s.db.DeleteFollow(context.Background(), database.DeleteFollowParams{
+		UserID: user.ID,
+		FeedID: currentFeed.ID,
+	})
+	if err2 != nil {
+		return fmt.Errorf("error creating feed follow: %w", err2)
+	}
+
+	return nil
+}
+
 func handlerFollowing(s *state, cmd command, user database.User) error {
 	if len(cmd.args) != 0 {
 		return fmt.Errorf(("invalid command: no arguments required"))
@@ -249,6 +275,35 @@ func handlerFollowing(s *state, cmd command, user database.User) error {
 
 	for _, feed := range followingRes {
 		fmt.Println(feed.Name)
+	}
+
+	return nil
+}
+
+func scrapeFeeds(s *state) error {
+	nextFeed, err := s.db.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return fmt.Errorf("error fetching next feed: %w", err)
+	}
+
+	err2 := s.db.MarkFeed(context.Background(), database.MarkFeedParams{
+		LastFetchedAt: sql.NullTime{
+			Time:  time.Now(),
+			Valid: true,
+		},
+		ID: nextFeed.ID,
+	})
+	if err2 != nil {
+		return fmt.Errorf("error marking feed fetched: %w", err2)
+	}
+
+	currentFeed, err := rss.FetchFeed(context.Background(), nextFeed.Url)
+	if err != nil {
+		return fmt.Errorf("error fetching feed: %w", err)
+	}
+
+	for _, item := range currentFeed.Channel.Item {
+		fmt.Println(item.Title)
 	}
 
 	return nil
@@ -286,24 +341,16 @@ func main() {
 	dbQueries := database.New(db)
 	appState.db = dbQueries
 
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "login", handlerLogin)
 	cmds.register("login", handlerLogin)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "register", handlerRegister)
 	cmds.register("register", handlerRegister)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "reset", handlerReset)
 	cmds.register("reset", handlerReset)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "users", handlerGetAllUsers)
 	cmds.register("users", handlerGetAllUsers)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "agg", handlerAgg)
 	cmds.register("agg", handlerAgg)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "addfeed", handlerAddFeed)
 	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "feeds", handlerListFeeds)
 	cmds.register("feeds", handlerListFeeds)
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "follow", handlerFollow)
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
-	//fmt.Printf("main(): Registering command '%s' with handler %p\n", "following", handlerFollowing)
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
+	cmds.register("unfollow", middlewareLoggedIn(handlerUnFollow))
 
 	args := os.Args
 	if len(args) < 2 {
