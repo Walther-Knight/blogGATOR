@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Walther-Knight/blogGATOR/internal/config"
 	"github.com/Walther-Knight/blogGATOR/internal/database"
 	"github.com/Walther-Knight/blogGATOR/internal/rss"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 type state struct {
@@ -280,6 +281,38 @@ func handlerFollowing(s *state, cmd command, user database.User) error {
 	return nil
 }
 
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	var limit string
+	if len(cmd.args) == 0 {
+		limit = "2"
+	} else {
+		limit = cmd.args[0]
+	}
+	parsedLimit, err := strconv.ParseInt(limit, 10, 32)
+	if err != nil {
+		return fmt.Errorf("error converting limit argument to integer: %w", err)
+	}
+	convLimit := int32(parsedLimit)
+
+	browseRes, err2 := s.db.GetPostsByUser(context.Background(), database.GetPostsByUserParams{
+		UserID: user.ID,
+		Limit:  convLimit,
+	})
+	if err2 != nil {
+		return fmt.Errorf("error retrieving posts by user from database: %w", err2)
+	}
+
+	for i, post := range browseRes {
+		fmt.Printf("Post Number %d\n", i+1)
+		fmt.Println(post.Title)
+		fmt.Println(post.Description)
+		fmt.Println(post.PublishedAt)
+		fmt.Println(post.Url)
+	}
+
+	return nil
+}
+
 func scrapeFeeds(s *state) error {
 	nextFeed, err := s.db.GetNextFeedToFetch(context.Background())
 	if err != nil {
@@ -303,7 +336,31 @@ func scrapeFeeds(s *state) error {
 	}
 
 	for _, item := range currentFeed.Channel.Item {
-		fmt.Println(item.Title)
+		parsedDate, err2 := time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", item.PubDate)
+		if err2 != nil {
+			fmt.Printf("error parsing blog time: %v\n", err2)
+			continue
+		}
+		err3 := s.db.CreatePost(context.Background(), database.CreatePostParams{
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+			Title:     item.Title,
+			Url:       item.Link,
+			Description: sql.NullString{
+				String: item.Description,
+				Valid:  item.Description != "",
+			},
+			PublishedAt: parsedDate,
+			FeedID:      nextFeed.ID,
+		})
+		if err3 != nil {
+			if pqErr, ok := err3.(*pq.Error); ok {
+				if pqErr.Code == "23505" {
+					continue
+				}
+			}
+			fmt.Printf("error inserting to posts table: %v\n", err3)
+		}
 	}
 
 	return nil
@@ -351,6 +408,7 @@ func main() {
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	cmds.register("unfollow", middlewareLoggedIn(handlerUnFollow))
+	cmds.register("browse", middlewareLoggedIn(handlerBrowse))
 
 	args := os.Args
 	if len(args) < 2 {
